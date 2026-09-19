@@ -18,7 +18,7 @@ import { getStoredHistory, getStoredInstitution, getStoredTargetGrams } from "./
 
 // Safe runtime fallback for project credentials (prevents blank screen crashes if hosting environment variables are missing)
 const DEFAULT_API_KEY = typeof atob !== 'undefined' 
-  ? atob("QUl6YVN5Q1NBUXVJOXFzZVh1MmpzX1VpZ2NOWHFzcFUwQW9fNGlV") 
+  ? atob("QUl6YVN5Q1NBUXVJOHFzZVh1MmpzX1VpZ2NOWHFzcFUwQW9fNGlV") 
   : "AIzaSyCSAQuI8qseXu2js_UigcNXqspU0Ao_4iU";
 
 const firebaseConfig = {
