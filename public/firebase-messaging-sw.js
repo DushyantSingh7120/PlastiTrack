@@ -2,37 +2,40 @@
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
 
-// Initialize the Firebase app in the service worker by passing in
-// your app's Firebase config object.
-// https://firebase.google.com/docs/web/setup#config-object
+// Initialize the Firebase app in the service worker dynamically from query parameters
+// Passed from requestNotificationPermission()
+const params = new URLSearchParams(self.location.search);
 const firebaseConfig = {
-  apiKey: "AIzaSyCSAQuI8qseXu2js_UigcNXqspU0Ao_4iU",
-  authDomain: "plastitrack-e231a.firebaseapp.com",
-  projectId: "plastitrack-e231a",
-  storageBucket: "plastitrack-e231a.firebasestorage.app",
-  messagingSenderId: "700500715665",
-  appId: "1:700500715665:web:749eaf521ebb66ed4fb730",
-  measurementId: "G-756PB9MF76"
+  apiKey: params.get('apiKey') || '',
+  authDomain: params.get('authDomain') || '',
+  projectId: params.get('projectId') || '',
+  storageBucket: params.get('storageBucket') || '',
+  messagingSenderId: params.get('messagingSenderId') || '',
+  appId: params.get('appId') || '',
+  measurementId: params.get('measurementId') || ''
 };
 
-firebase.initializeApp(firebaseConfig);
+if (firebaseConfig.apiKey && firebaseConfig.projectId) {
+  try {
+    firebase.initializeApp(firebaseConfig);
+    const messaging = firebase.messaging();
 
-// Retrieve an instance of Firebase Messaging so that it can handle background
-// messages.
-const messaging = firebase.messaging();
+    messaging.onBackgroundMessage((payload) => {
+      console.log(
+        '[firebase-messaging-sw.js] Received background message ',
+        payload
+      );
+      const notificationTitle = payload.notification?.title || 'PlastiTrack Reminder';
+      const notificationOptions = {
+        body: payload.notification?.body || 'Remember to log your plastic usage today!',
+        icon: '/icons/icon-192x192.png',
+        badge: '/favicon-48x48.png'
+      };
 
-messaging.onBackgroundMessage((payload) => {
-  console.log(
-    '[firebase-messaging-sw.js] Received background message ',
-    payload
-  );
-  // Customize notification here
-  const notificationTitle = payload.notification.title || 'PlastiTrack Reminder';
-  const notificationOptions = {
-    body: payload.notification.body,
-    icon: '/icons/icon-192x192.png',
-    badge: '/favicon-48x48.png'
-  };
+      self.registration.showNotification(notificationTitle, notificationOptions);
+    });
+  } catch (e) {
+    console.warn('[firebase-messaging-sw.js] Initialization warning:', e);
+  }
+}
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
-});

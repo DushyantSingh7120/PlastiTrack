@@ -16,15 +16,15 @@ import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 import { getStoredHistory, getStoredInstitution, getStoredTargetGrams } from "./storage";
 
-// Read configuration from environment variables (with fallback to the user's project)
+// Read configuration from environment variables (.env / .env.local)
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCSAQuI8qseXu2js_UigcNXqspU0Ao_4iU",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "plastitrack-e231a.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "plastitrack-e231a",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "plastitrack-e231a.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "700500715665",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:700500715665:web:749eaf521ebb66ed4fb730",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-756PB9MF76"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
 };
 
 // Initialize Firebase App safely (prevent duplicate initialization in hot-reload)
@@ -48,9 +48,15 @@ export async function requestNotificationPermission() {
       if (!vapidKey) {
         return { success: false, message: "VAPID key is missing. Add VITE_FIREBASE_VAPID_KEY to your environment variables." };
       }
-      const token = await getToken(messaging, { vapidKey });
+      
+      let serviceWorkerRegistration = undefined;
+      if ('serviceWorker' in navigator && firebaseConfig.apiKey) {
+        const swUrl = `/firebase-messaging-sw.js?apiKey=${encodeURIComponent(firebaseConfig.apiKey)}&projectId=${encodeURIComponent(firebaseConfig.projectId || '')}&messagingSenderId=${encodeURIComponent(firebaseConfig.messagingSenderId || '')}&appId=${encodeURIComponent(firebaseConfig.appId || '')}&authDomain=${encodeURIComponent(firebaseConfig.authDomain || '')}&storageBucket=${encodeURIComponent(firebaseConfig.storageBucket || '')}`;
+        serviceWorkerRegistration = await navigator.serviceWorker.register(swUrl);
+      }
+
+      const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration });
       if (token) {
-        // In a full production app, you would save this token to Firestore under the user's document
         console.log("FCM Token retrieved:", token);
         return { success: true, token };
       } else {
