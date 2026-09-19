@@ -16,7 +16,7 @@ import { auth, debouncedSyncLocalToFirestore } from './lib/firebase';
 function App() {
   React.useEffect(() => {
     const handleDataUpdate = () => {
-      if (auth.currentUser) {
+      if (auth?.currentUser) {
         debouncedSyncLocalToFirestore(auth.currentUser);
       }
     };
