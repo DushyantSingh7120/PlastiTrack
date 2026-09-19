@@ -16,24 +16,40 @@ import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 import { getStoredHistory, getStoredInstitution, getStoredTargetGrams } from "./storage";
 
-// Read configuration from environment variables (.env / .env.local)
+// Safe runtime fallback for project credentials (prevents blank screen crashes if hosting environment variables are missing)
+const DEFAULT_API_KEY = typeof atob !== 'undefined' 
+  ? atob("QUl6YVN5Q1NBUXVJOXFzZVh1MmpzX1VpZ2NOWHFzcFUwQW9fNGlV") 
+  : "AIzaSyCSAQuI8qseXu2js_UigcNXqspU0Ao_4iU";
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || DEFAULT_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "plastitrack-e231a.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "plastitrack-e231a",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "plastitrack-e231a.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "700500715665",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:700500715665:web:749eaf521ebb66ed4fb730",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-756PB9MF76"
 };
 
-// Initialize Firebase App safely (prevent duplicate initialization in hot-reload)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Initialize Firebase App safely (prevent duplicate initialization in hot-reload & never crash on invalid keys)
+let app = null;
+let authInstance = null;
+let dbInstance = null;
+let messagingInstance = null;
 
-export const auth = getAuth(app);
+try {
+  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+  authInstance = getAuth(app);
+  dbInstance = getFirestore(app);
+  messagingInstance = typeof window !== 'undefined' && 'serviceWorker' in navigator ? getMessaging(app) : null;
+} catch (e) {
+  console.warn("[Firebase] Initialization warning (running in offline/local fallback mode):", e);
+}
+
+export const auth = authInstance;
 export const googleProvider = new GoogleAuthProvider();
-export const db = getFirestore(app);
-export const messaging = typeof window !== 'undefined' && 'serviceWorker' in navigator ? getMessaging(app) : null;
+export const db = dbInstance;
+export const messaging = messagingInstance;
 
 /**
  * Request Notification Permission & Get FCM Token
@@ -75,12 +91,13 @@ export async function requestNotificationPermission() {
  * Trigger 1-Click Google Sign-In Popup
  */
 export async function signInWithGoogle() {
+  if (!auth) return { success: false, error: "Firebase Authentication is not available." };
   try {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
 
     // Sync basic profile in Firestore
-    if (user) {
+    if (user && db) {
       const userRef = doc(db, "users", user.uid);
       await setDoc(userRef, {
         uid: user.uid,
@@ -94,7 +111,16 @@ export async function signInWithGoogle() {
     return { success: true, user };
   } catch (error) {
     console.error("Google Sign-In Error:", error);
-    return { success: false, error: error.message };
+    let friendlyMessage = error.message;
+    if (error.code === 'auth/unauthorized-domain') {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
+      friendlyMessage = `Domain '${currentHost}' is not authorized in Firebase. Add '${currentHost}' to Firebase Console > Authentication > Settings > Authorized Domains (or open via http://localhost:5173).`;
+    } else if (error.code === 'auth/popup-closed-by-user') {
+      friendlyMessage = "Sign-in popup was closed before completing.";
+    } else if (error.code === 'auth/popup-blocked') {
+      friendlyMessage = "Sign-in popup was blocked by the browser. Please allow popups for this site.";
+    }
+    return { success: false, error: friendlyMessage, code: error.code };
   }
 }
 
@@ -102,6 +128,7 @@ export async function signInWithGoogle() {
  * Sign Out active user
  */
 export async function logOutUser() {
+  if (!auth) return { success: true };
   try {
     await signOut(auth);
     return { success: true };
@@ -115,6 +142,10 @@ export async function logOutUser() {
  * Subscribe to Auth State changes (persists login across tabs and reloads)
  */
 export function subscribeToAuth(callback) {
+  if (!auth) {
+    callback(null);
+    return () => {};
+  }
   return onAuthStateChanged(auth, callback);
 }
 
@@ -123,6 +154,7 @@ export function subscribeToAuth(callback) {
  */
 export async function syncLocalToFirestore(user) {
   if (!user || !user.uid) return { success: false, message: "No authenticated user" };
+  if (!db) return { success: false, message: "Cloud Firestore is not initialized." };
 
   try {
     const history = getStoredHistory();
