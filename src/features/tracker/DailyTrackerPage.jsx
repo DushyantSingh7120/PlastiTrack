@@ -205,9 +205,10 @@ const ITEM_NAMES = {
 export default function DailyTrackerPage() {
   const [counts, setCounts] = useState(() => {
     const saved = getTrackerCounts();
-    if (saved && Object.keys(saved).length > 0) return saved;
     const initial = {};
-    TRACKER_PRESETS.forEach(item => initial[item.id] = 0);
+    TRACKER_PRESETS.forEach(item => {
+      initial[item.id] = (saved && saved[item.id]) ? Number(saved[item.id]) : 0;
+    });
     return initial;
   });
 
@@ -218,13 +219,11 @@ export default function DailyTrackerPage() {
   useEffect(() => {
     const syncCountsAndHistory = () => {
       const saved = getTrackerCounts();
-      if (saved && Object.keys(saved).length > 0) {
-        setCounts(saved);
-      } else {
-        const initial = {};
-        TRACKER_PRESETS.forEach(item => initial[item.id] = 0);
-        setCounts(initial);
-      }
+      const nextCounts = {};
+      TRACKER_PRESETS.forEach(item => {
+        nextCounts[item.id] = (saved && saved[item.id]) ? Number(saved[item.id]) : 0;
+      });
+      setCounts(nextCounts);
       setHistory(getStoredHistory());
     };
 

@@ -257,15 +257,15 @@ export default function CloudSyncModal({ isOpen, onClose }) {
             <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2 text-xs font-body text-stone-700">
               <h4 className="font-heading font-bold text-stone-900 flex items-center gap-1.5 text-xs sm:text-sm">
                 <ShieldCheck size={16} className="text-emerald-700" />
-                How PlastiTrack Handles Your Environmental Data
+                Automatic Multi-Device Synchronization
               </h4>
               <p className="leading-relaxed">
-                PlastiTrack is built as a <strong>Local-First Hybrid System</strong>:
+                PlastiTrack operates with <strong>seamless, zero-button cloud synchronization</strong>:
               </p>
               <ul className="space-y-1.5 font-mono text-[11px] text-stone-600 list-disc list-inside">
-                <li><strong className="text-stone-900">Offline Ready:</strong> You can log plastic items anywhere without internet. Everything saves directly to your device.</li>
-                <li><strong className="text-stone-900">Cloud Sync:</strong> When signed in with Google, your logs mirror automatically to <strong>Google Cloud Firestore</strong> (<code className="bg-stone-200/80 px-1 py-0.5 rounded text-[10px]">plastitrack-e231a</code>) so you never lose your streaks across phones or laptops.</li>
-                <li><strong className="text-stone-900">Strict Privacy:</strong> Student logs are protected by production security rules. No one else can view or edit your personal logs.</li>
+                <li><strong className="text-stone-900">Real-Time Sync:</strong> Any plastic item you log, update, or delete on your phone mirrors immediately to your laptop (and vice-versa). You never need to manually push or pull.</li>
+                <li><strong className="text-stone-900">Single Source of Truth:</strong> When logged in with Google, Cloud Firestore maintains your master environmental ledger.</li>
+                <li><strong className="text-stone-900">Offline Fallback:</strong> If you lose internet connection, your actions save locally and sync to the cloud automatically once you re-connect.</li>
               </ul>
             </div>
 
@@ -316,28 +316,16 @@ export default function CloudSyncModal({ isOpen, onClose }) {
             </span>
             <div className="flex items-center gap-2">
               {user && (
-                <>
-                  <button
-                    onClick={() => handleRestoreCloud()}
-                    disabled={syncing}
-                    type="button"
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 font-mono text-xs font-bold transition cursor-pointer shadow-2xs"
-                    title="Pull latest entries from Cloud Firestore"
-                  >
-                    <Cloud size={13} className={syncing ? "animate-spin text-emerald-600" : "text-emerald-700"} />
-                    <span>Pull Cloud</span>
-                  </button>
-                  <button
-                    onClick={() => handleCloudSync()}
-                    disabled={syncing}
-                    type="button"
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-mono text-xs font-bold transition cursor-pointer shadow-sm"
-                    title="Upload local entries to Cloud Firestore"
-                  >
-                    <RefreshCw size={13} className={syncing ? "animate-spin" : ""} />
-                    <span>Sync Cloud</span>
-                  </button>
-                </>
+                <button
+                  onClick={() => handleRestoreCloud()}
+                  disabled={syncing}
+                  type="button"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-mono text-xs font-bold transition cursor-pointer shadow-2xs"
+                  title="Force re-sync latest records from Cloud Firestore"
+                >
+                  <RefreshCw size={13} className={syncing ? "animate-spin text-emerald-700" : "text-emerald-700"} />
+                  <span>{syncing ? "Refreshing..." : "Force Refresh"}</span>
+                </button>
               )}
               <button
                 onClick={onClose}
