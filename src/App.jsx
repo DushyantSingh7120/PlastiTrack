@@ -21,6 +21,11 @@ import {
 
 function App() {
   React.useEffect(() => {
+    // Purge any stale firestore cache left over by previous Service Worker configurations
+    if (typeof caches !== 'undefined') {
+      caches.delete('firebase-firestore-cache').catch(() => {});
+    }
+
     let cloudUnsub = () => {};
 
     // 1. Listen for auth changes: when logged in, restore cloud data and listen to live updates
