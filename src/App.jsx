@@ -13,11 +13,9 @@ import LandingPage from './features/landing/LandingPage';
 import ResearchDocumentationPage from './features/docs/ResearchDocumentationPage';
 import { 
   auth, 
-  debouncedSyncLocalToFirestore, 
   subscribeToAuth, 
   restoreAndMergeFromFirestore, 
-  subscribeToCloudLogs,
-  getIsRemoteSyncInProgress
+  subscribeToCloudLogs
 } from './lib/firebase';
 
 function App() {
@@ -38,18 +36,7 @@ function App() {
       }
     });
 
-    // 2. Debounced auto-upload ONLY when change is made locally by the user (never from remote sync)
-    const handleDataUpdate = () => {
-      if (getIsRemoteSyncInProgress()) {
-        return; // Incoming cloud update: do NOT upload back to avoid ping-pong clobbering
-      }
-      if (auth?.currentUser) {
-        debouncedSyncLocalToFirestore(auth.currentUser);
-      }
-    };
-    window.addEventListener('plastitrack-data-updated', handleDataUpdate);
-
-    // 3. Seamless auto-refresh whenever user switches back to this window or tab
+    // 2. Seamless auto-refresh whenever user switches back to this window or tab
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && auth?.currentUser) {
         restoreAndMergeFromFirestore(auth.currentUser, { overwriteLocal: true });
@@ -61,7 +48,6 @@ function App() {
     return () => {
       authUnsub();
       cloudUnsub();
-      window.removeEventListener('plastitrack-data-updated', handleDataUpdate);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
     };

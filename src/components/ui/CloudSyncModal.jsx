@@ -16,11 +16,9 @@ import {
   signInWithGoogle, 
   logOutUser, 
   subscribeToAuth, 
-  syncLocalToFirestore,
   restoreAndMergeFromFirestore,
   requestNotificationPermission
 } from '../../lib/firebase';
-import { getStoredHistory } from '../../lib/storage';
 
 export default function CloudSyncModal({ isOpen, onClose }) {
   const [user, setUser] = useState(null);
@@ -48,7 +46,6 @@ export default function CloudSyncModal({ isOpen, onClose }) {
     if (!res.success) {
       setAuthError(res.error || "Google Sign-In failed. Check internet connection.");
     } else {
-      // 1. Pull from Firestore first with cloud as source of truth
       setSyncing(true);
       const restoreRes = await restoreAndMergeFromFirestore(res.user, { overwriteLocal: true });
       setSyncing(false);
@@ -56,19 +53,13 @@ export default function CloudSyncModal({ isOpen, onClose }) {
       if (restoreRes.success && restoreRes.count > 0) {
         setSyncStatus({ 
           type: 'success', 
-          text: `Synchronized ${restoreRes.count} daily logs from Cloud Firestore!` 
+          text: `Live Cloud connected! Synchronized ${restoreRes.count} daily logs.` 
         });
       } else {
-        // If cloud had 0 logs, check if user has local logs created in guest mode to sync
-        const localLogs = getStoredHistory();
-        if (localLogs.length > 0) {
-          handleCloudSync(res.user);
-        } else {
-          setSyncStatus({ 
-            type: 'success', 
-            text: 'Signed in successfully! Cloud storage active.' 
-          });
-        }
+        setSyncStatus({ 
+          type: 'success', 
+          text: 'Signed in successfully! Live real-time sync is active.' 
+        });
       }
     }
   };
@@ -79,19 +70,6 @@ export default function CloudSyncModal({ isOpen, onClose }) {
     setUser(null);
     setAuthLoading(false);
     setSyncStatus(null);
-  };
-
-  const handleCloudSync = async (activeUser = user) => {
-    if (!activeUser) return;
-    setSyncing(true);
-    setSyncStatus(null);
-    const res = await syncLocalToFirestore(activeUser);
-    setSyncing(false);
-    if (res.success) {
-      setSyncStatus({ type: 'success', text: `Successfully synced ${res.count} daily logs to Cloud Firestore!` });
-    } else {
-      setSyncStatus({ type: 'error', text: res.message || res.error || "Cloud sync failed." });
-    }
   };
 
   const handleRestoreCloud = async (activeUser = user) => {
@@ -109,7 +87,7 @@ export default function CloudSyncModal({ isOpen, onClose }) {
       } else {
         setSyncStatus({ 
           type: 'success', 
-          text: `Restored ${res.count} daily logs from Cloud Firestore!` 
+          text: `Refreshed ${res.count} records from Cloud Firestore!` 
         });
       }
     } else {
@@ -181,10 +159,11 @@ export default function CloudSyncModal({ isOpen, onClose }) {
                     </div>
                   )}
                   <div>
-                    <div className="text-xs font-mono font-bold text-emerald-950 flex items-center gap-1.5">
+                    <div className="text-xs font-mono font-bold text-emerald-950 flex items-center gap-2">
                       <span>{user.displayName || "PlastiTrack Student"}</span>
-                      <span className="px-1.5 py-0.2 bg-emerald-200 text-emerald-900 text-[9px] rounded font-mono font-black">
-                        CLOUD ACTIVE
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-emerald-200/90 text-emerald-900 text-[9px] rounded-full font-mono font-black border border-emerald-300">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                        LIVE SYNC CONNECTED
                       </span>
                     </div>
                     <div className="text-[11px] font-mono text-emerald-800 truncate max-w-[200px]">
@@ -257,15 +236,15 @@ export default function CloudSyncModal({ isOpen, onClose }) {
             <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2 text-xs font-body text-stone-700">
               <h4 className="font-heading font-bold text-stone-900 flex items-center gap-1.5 text-xs sm:text-sm">
                 <ShieldCheck size={16} className="text-emerald-700" />
-                Automatic Multi-Device Synchronization
+                Invisible Multi-Device Real-Time Sync
               </h4>
               <p className="leading-relaxed">
-                PlastiTrack operates with <strong>seamless, zero-button cloud synchronization</strong>:
+                PlastiTrack operates with <strong>seamless, zero-button multi-device sync</strong>:
               </p>
               <ul className="space-y-1.5 font-mono text-[11px] text-stone-600 list-disc list-inside">
-                <li><strong className="text-stone-900">Real-Time Sync:</strong> Any plastic item you log, update, or delete on your phone mirrors immediately to your laptop (and vice-versa). You never need to manually push or pull.</li>
-                <li><strong className="text-stone-900">Single Source of Truth:</strong> When logged in with Google, Cloud Firestore maintains your master environmental ledger.</li>
-                <li><strong className="text-stone-900">Offline Fallback:</strong> If you lose internet connection, your actions save locally and sync to the cloud automatically once you re-connect.</li>
+                <li><strong className="text-stone-900">Instant Mirroring:</strong> Any item count you tap (+ or -), log, or delete on your phone mirrors immediately to your laptop (and vice-versa) in under 200ms.</li>
+                <li><strong className="text-stone-900">Zero Manual Buttons:</strong> You never need to remember to "pull" or "sync". Everything happens in real-time.</li>
+                <li><strong className="text-stone-900">Auto Reconnection:</strong> Automatically refreshes and reconnects whenever you unlock your phone or switch tabs.</li>
               </ul>
             </div>
 

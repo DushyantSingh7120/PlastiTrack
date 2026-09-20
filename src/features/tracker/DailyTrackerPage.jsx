@@ -23,12 +23,15 @@ import {
   removeHistoryEntryByIndex,
   dispatchDataUpdate,
   getTodayIsoDate,
-  getIsoDateFromTimestamp
+  getIsoDateFromTimestamp,
+  isSameDay
 } from '../../lib/storage';
 import { 
   auth, 
   deleteHistoryEntryFromFirestore, 
-  syncLocalToFirestore 
+  syncLocalToFirestore,
+  debouncedSyncLocalToFirestore,
+  saveLiveDraftCounts
 } from '../../lib/firebase';
 
 export const TRACKER_PRESETS = [
@@ -239,14 +242,22 @@ export default function DailyTrackerPage() {
   const handleDeleteEntry = async (index) => {
     const entryToDelete = history[index];
     const dateIso = entryToDelete?.dateIso || getIsoDateFromTimestamp(entryToDelete?.timestamp || entryToDelete?.date);
+    const isToday = isSameDay(dateIso, getTodayIsoDate());
+
     removeHistoryEntryByIndex(index);
     const updatedHistory = getStoredHistory();
     setHistory(updatedHistory);
-    const zeroed = {};
-    TRACKER_PRESETS.forEach((item) => (zeroed[item.id] = 0));
-    setCounts(zeroed);
-    setTrackerCounts(zeroed);
-    showNotice('Entry removed and counters zeroed.');
+
+    if (isToday) {
+      const zeroed = {};
+      TRACKER_PRESETS.forEach((item) => (zeroed[item.id] = 0));
+      setCounts(zeroed);
+      setTrackerCounts(zeroed);
+      if (auth?.currentUser) {
+        await saveLiveDraftCounts(auth.currentUser, zeroed, { immediate: true });
+      }
+    }
+    showNotice('Entry removed and counters updated.');
 
     if (auth?.currentUser) {
       if (dateIso) {
@@ -268,6 +279,7 @@ export default function DailyTrackerPage() {
     showNotice('All logged data cleared successfully.');
 
     if (auth?.currentUser) {
+      await saveLiveDraftCounts(auth.currentUser, zeroed, { immediate: true });
       await syncLocalToFirestore(auth.currentUser);
     }
   };
@@ -279,6 +291,10 @@ export default function DailyTrackerPage() {
       const loaded = { ...initial, ...entry.counts };
       setCounts(loaded);
       setTrackerCounts(loaded);
+      if (auth?.currentUser) {
+        saveLiveDraftCounts(auth.currentUser, loaded);
+        debouncedSyncLocalToFirestore(auth.currentUser);
+      }
       showNotice('Loaded entry items into logger counters.');
     }
   };
@@ -291,6 +307,11 @@ export default function DailyTrackerPage() {
       setTrackerCounts(updated);
       syncTodayHistoryWithCounts(updated);
       dispatchDataUpdate();
+
+      if (auth?.currentUser) {
+        saveLiveDraftCounts(auth.currentUser, updated);
+        debouncedSyncLocalToFirestore(auth.currentUser);
+      }
       return updated;
     });
   };
@@ -305,6 +326,7 @@ export default function DailyTrackerPage() {
     showNotice("Counters reset and today's log cleared.");
 
     if (auth?.currentUser) {
+      await saveLiveDraftCounts(auth.currentUser, zeroed, { immediate: true });
       const todayIso = getTodayIsoDate();
       await deleteHistoryEntryFromFirestore(auth.currentUser, todayIso);
       await syncLocalToFirestore(auth.currentUser);
@@ -366,6 +388,7 @@ export default function DailyTrackerPage() {
     );
 
     if (auth?.currentUser) {
+      await saveLiveDraftCounts(auth.currentUser, counts, { immediate: true });
       await syncLocalToFirestore(auth.currentUser);
     }
   };

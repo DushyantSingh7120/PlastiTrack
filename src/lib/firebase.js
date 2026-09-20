@@ -24,9 +24,11 @@ import {
   setStoredHistory,
   getStoredInstitution, 
   setStoredInstitution,
-  getStoredTargetGrams,
+  getStoredTargetGrams, 
   setStoredTargetGrams,
+  getTrackerCounts,
   setTrackerCounts,
+  syncTodayHistoryWithCounts,
   getTodayIsoDate,
   mergeHistoryEntries,
   getIsoDateFromTimestamp,
@@ -118,6 +120,33 @@ export async function signInWithGoogle() {
         photoURL: user.photoURL,
         lastLoginAt: serverTimestamp(),
       }, { merge: true });
+
+      // Non-destructive guest-to-cloud migration:
+      // Check existing cloud daily logs
+      const logsCol = collection(db, "users", user.uid, "dailyLogs");
+      const cloudSnap = await getDocs(logsCol);
+      const cloudDates = new Set();
+      cloudSnap.forEach(docSnap => cloudDates.add(docSnap.id));
+
+      const localHistory = getStoredHistory();
+      // If there are guest logs for dates that do not exist in cloud, migrate them safely
+      for (const entry of localHistory) {
+        const docId = entry.dateIso || getIsoDateFromTimestamp(entry.timestamp || entry.date);
+        if (docId && !cloudDates.has(docId)) {
+          const logRef = doc(db, "users", user.uid, "dailyLogs", docId);
+          await setDoc(logRef, {
+            timestamp: entry.timestamp || new Date().toISOString(),
+            date: entry.date,
+            dateIso: docId,
+            totalGrams: Number(entry.totalGrams) || 0,
+            totalCostINR: Number(entry.totalCostINR) || 0,
+            counts: entry.counts || {},
+            maxDecomposition: Number(entry.maxDecomposition) || 450,
+            syncedAt: serverTimestamp(),
+            updatedAt: Date.now()
+          }, { merge: true });
+        }
+      }
     }
 
     return { success: true, user };
@@ -184,6 +213,36 @@ export async function deleteHistoryEntryFromFirestore(user, dateIso) {
 }
 
 /**
+ * Save live uncommitted active draft counter state to Firestore user profile
+ * Debounced to collapse rapid tap sequences (+, +, +) into a single write
+ */
+let liveDraftTimeout = null;
+export async function saveLiveDraftCounts(user, counts, options = {}) {
+  if (!user || !user.uid || !db) return;
+  if (liveDraftTimeout) {
+    clearTimeout(liveDraftTimeout);
+    liveDraftTimeout = null;
+  }
+  const doSave = async () => {
+    try {
+      const userRef = doc(db, "users", user.uid);
+      await setDoc(userRef, {
+        activeDraftCounts: counts || {},
+        activeDraftUpdatedAt: Date.now()
+      }, { merge: true });
+    } catch (err) {
+      console.warn("[Firebase] Failed to save live draft counts:", err);
+    }
+  };
+
+  if (options.immediate) {
+    await doSave();
+  } else {
+    liveDraftTimeout = setTimeout(doSave, 800);
+  }
+}
+
+/**
  * Restore and merge Cloud Firestore data with local storage
  * Cloud is the master source of truth across devices
  */
@@ -197,6 +256,7 @@ export async function restoreAndMergeFromFirestore(user, options = { overwriteLo
     const userRef = doc(db, "users", user.uid);
     const userSnap = await getDoc(userRef);
 
+    let cloudDraftCounts = null;
     if (userSnap.exists()) {
       const data = userSnap.data();
       if (data.dailyTargetGrams && Number(data.dailyTargetGrams) > 0) {
@@ -204,6 +264,9 @@ export async function restoreAndMergeFromFirestore(user, options = { overwriteLo
       }
       if (data.institution && typeof data.institution === 'string') {
         setStoredInstitution(data.institution);
+      }
+      if (data.activeDraftCounts !== undefined) {
+        cloudDraftCounts = data.activeDraftCounts;
       }
     }
 
@@ -243,7 +306,11 @@ export async function restoreAndMergeFromFirestore(user, options = { overwriteLo
     // Synchronize today's tracker counts
     const todayIso = getTodayIsoDate();
     const todayEntry = finalHistory.find(e => e.dateIso === todayIso);
-    if (todayEntry && todayEntry.counts && Object.keys(todayEntry.counts).length > 0) {
+    
+    if (cloudDraftCounts && Object.keys(cloudDraftCounts).length > 0) {
+      setTrackerCounts(cloudDraftCounts);
+      syncTodayHistoryWithCounts(cloudDraftCounts);
+    } else if (todayEntry && todayEntry.counts && Object.keys(todayEntry.counts).length > 0) {
       setTrackerCounts(todayEntry.counts);
     } else {
       setTrackerCounts({});
@@ -262,71 +329,139 @@ export async function restoreAndMergeFromFirestore(user, options = { overwriteLo
 }
 
 /**
- * Real-time listener for multi-device sync
- * Whenever any device modifies dailyLogs in Firestore, updates local storage and tracker counts
+ * Real-time resilience supervisor for multi-device sync
+ * Listens to active drafts (users/{uid}) and daily logs (users/{uid}/dailyLogs)
+ * Features auto-reconnection with exponential backoff and auth token refresh
  */
 export function subscribeToCloudLogs(user, onUpdate) {
   if (!user || !user.uid || !db) {
     return () => {};
   }
 
-  try {
-    const logsCol = collection(db, "users", user.uid, "dailyLogs");
-    const unsubscribe = onSnapshot(logsCol, (snapshot) => {
-      if (snapshot.metadata.hasPendingWrites) {
-        return;
-      }
+  let active = true;
+  let unsubUser = () => {};
+  let unsubLogs = () => {};
+  let reconnectTimer = null;
+  let backoffDelay = 2000;
 
-      isRemoteSyncInProgress = true;
-      try {
-        const cloudEntries = [];
-        snapshot.forEach((docSnap) => {
-          const log = docSnap.data();
-          if (log) {
-            const id = docSnap.id;
-            const entryIso = log.dateIso || (id.length === 10 && id.includes('-') ? id : null);
-            cloudEntries.push({
-              ...log,
-              dateIso: entryIso || getIsoDateFromTimestamp(log.timestamp || log.date)
-            });
+  const connect = () => {
+    if (!active) return;
+
+    try {
+      // 1. Listen to activeDraftCounts and settings on user doc
+      const userRef = doc(db, "users", user.uid);
+      unsubUser = onSnapshot(userRef, (snapshot) => {
+        backoffDelay = 2000;
+        if (snapshot.metadata.hasPendingWrites) return;
+
+        const data = snapshot.data();
+        if (data && data.activeDraftCounts !== undefined) {
+          isRemoteSyncInProgress = true;
+          try {
+            const counts = data.activeDraftCounts || {};
+            setTrackerCounts(counts);
+            syncTodayHistoryWithCounts(counts);
+            dispatchDataUpdate();
+          } finally {
+            setTimeout(() => {
+              isRemoteSyncInProgress = false;
+            }, 400);
           }
-        });
-
-        const sortedCloud = cloudEntries.sort((a, b) => {
-          const timeA = new Date(a.timestamp || a.dateIso || 0).getTime();
-          const timeB = new Date(b.timestamp || b.dateIso || 0).getTime();
-          return timeA - timeB;
-        });
-
-        setStoredHistory(sortedCloud);
-
-        // Synchronize today's tracker counts
-        const todayIso = getTodayIsoDate();
-        const todayEntry = sortedCloud.find(e => e.dateIso === todayIso);
-        if (todayEntry && todayEntry.counts && Object.keys(todayEntry.counts).length > 0) {
-          setTrackerCounts(todayEntry.counts);
-        } else {
-          setTrackerCounts({});
         }
+      }, (err) => {
+        handleError(err, 'userDoc');
+      });
 
-        dispatchDataUpdate();
-        if (typeof onUpdate === 'function') {
-          onUpdate(sortedCloud);
+      // 2. Listen to historical daily logs collection
+      const logsCol = collection(db, "users", user.uid, "dailyLogs");
+      unsubLogs = onSnapshot(logsCol, (snapshot) => {
+        backoffDelay = 2000;
+        if (snapshot.metadata.hasPendingWrites) return;
+
+        isRemoteSyncInProgress = true;
+        try {
+          const cloudEntries = [];
+          snapshot.forEach((docSnap) => {
+            const log = docSnap.data();
+            if (log) {
+              const id = docSnap.id;
+              const entryIso = log.dateIso || (id.length === 10 && id.includes('-') ? id : null);
+              cloudEntries.push({
+                ...log,
+                dateIso: entryIso || getIsoDateFromTimestamp(log.timestamp || log.date)
+              });
+            }
+          });
+
+          const sortedCloud = cloudEntries.sort((a, b) => {
+            const timeA = new Date(a.timestamp || a.dateIso || 0).getTime();
+            const timeB = new Date(b.timestamp || b.dateIso || 0).getTime();
+            return timeA - timeB;
+          });
+
+          setStoredHistory(sortedCloud);
+
+          const todayIso = getTodayIsoDate();
+          const todayEntry = sortedCloud.find(e => e.dateIso === todayIso);
+          if (todayEntry && todayEntry.counts && Object.keys(todayEntry.counts).length > 0) {
+            setTrackerCounts(todayEntry.counts);
+          } else if (!todayEntry) {
+            const currentCounts = getTrackerCounts();
+            const hasCounts = Object.values(currentCounts).some(v => v > 0);
+            if (!hasCounts) {
+              setTrackerCounts({});
+            }
+          }
+
+          dispatchDataUpdate();
+          if (typeof onUpdate === 'function') {
+            onUpdate(sortedCloud);
+          }
+        } finally {
+          setTimeout(() => {
+            isRemoteSyncInProgress = false;
+          }, 400);
         }
-      } finally {
-        setTimeout(() => {
-          isRemoteSyncInProgress = false;
-        }, 400);
+      }, (err) => {
+        handleError(err, 'dailyLogs');
+      });
+
+    } catch (err) {
+      handleError(err, 'connect');
+    }
+  };
+
+  const handleError = async (err, context) => {
+    console.warn(`[Firebase] Real-time listener warning in ${context}:`, err?.code || err?.message || err);
+    if (!active) return;
+
+    try { unsubUser(); } catch (_) {}
+    try { unsubLogs(); } catch (_) {}
+
+    // Refresh auth token if session expired during background/sleep
+    if (auth?.currentUser && (err?.code === 'permission-denied' || err?.code === 'unavailable')) {
+      try {
+        await auth.currentUser.getIdToken(true);
+      } catch (tokenErr) {
+        console.warn("[Firebase] Auth token refresh warning:", tokenErr);
       }
-    }, (err) => {
-      console.warn("[Firebase] Real-time cloud logs listener error:", err);
-    });
+    }
 
-    return unsubscribe;
-  } catch (err) {
-    console.warn("[Firebase] Failed to attach cloud listener:", err);
-    return () => {};
-  }
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+      backoffDelay = Math.min(backoffDelay * 1.5, 30000);
+      connect();
+    }, backoffDelay);
+  };
+
+  connect();
+
+  return () => {
+    active = false;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    try { unsubUser(); } catch (_) {}
+    try { unsubLogs(); } catch (_) {}
+  };
 }
 
 /**
@@ -341,6 +476,7 @@ export async function syncLocalToFirestore(user) {
     const history = getStoredHistory();
     const institution = getStoredInstitution();
     const targetGrams = getStoredTargetGrams();
+    const trackerCounts = getTrackerCounts();
 
     // 1. Update user profile document
     const userRef = doc(db, "users", user.uid);
@@ -349,6 +485,7 @@ export async function syncLocalToFirestore(user) {
       email: user.email,
       institution,
       dailyTargetGrams: targetGrams,
+      activeDraftCounts: trackerCounts || {},
       totalEntries: history.length,
       lastSyncedAt: serverTimestamp(),
       updatedAt: Date.now()
@@ -398,7 +535,7 @@ export async function syncLocalToFirestore(user) {
 
 /**
  * Debounced Sync to prevent Firebase Quota Exhaustion
- * Waits 3 seconds after the last call before syncing to the cloud.
+ * Waits 1 second after the last call before syncing to the cloud.
  */
 let syncTimeout = null;
 export function debouncedSyncLocalToFirestore(user) {
@@ -409,10 +546,9 @@ export function debouncedSyncLocalToFirestore(user) {
   }
   
   syncTimeout = setTimeout(async () => {
-    console.log("[Firebase] Auto-syncing debounced logs to cloud...");
     await syncLocalToFirestore(user);
     syncTimeout = null;
-  }, 1200);
+  }, 1000);
 }
 
 export default app;

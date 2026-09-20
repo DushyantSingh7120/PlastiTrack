@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Check, Zap, Coffee, Droplets, ShoppingBag, Utensils } from 'lucide-react';
 import { kineticHover, kineticTap } from '../../lib/motion';
-import { quickAddTrackerItem } from '../../lib/storage';
+import { quickAddTrackerItem, getTrackerCounts } from '../../lib/storage';
+import { auth, saveLiveDraftCounts, debouncedSyncLocalToFirestore } from '../../lib/firebase';
 
 const FREQUENT_ITEMS = [
   {
@@ -49,6 +50,11 @@ export default function FrequentItemsShelf() {
   const handleQuickLog = (item) => {
     try {
       quickAddTrackerItem(item.id, 1);
+      if (auth?.currentUser) {
+        const counts = getTrackerCounts();
+        saveLiveDraftCounts(auth.currentUser, counts);
+        debouncedSyncLocalToFirestore(auth.currentUser);
+      }
       setLoggedItem(`${item.label} (+${item.weight}g)`);
       setTimeout(() => setLoggedItem(null), 2400);
     } catch (e) {
