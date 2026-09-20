@@ -438,15 +438,20 @@ export default function DailyTrackerPage() {
                   key={item.id}
                   variants={kineticCard}
                   whileHover={kineticHover}
+                  whileTap={{ scale: 0.985 }}
                   style={{ perspective: 1000 }}
-                  className="bg-white/35 backdrop-blur-xl rounded-2xl border border-white/60 p-5 shadow-xs hover:shadow-md hover:bg-white/50 transition-all flex flex-col justify-between"
+                  onClick={() => updateCount(item.id, 1)}
+                  className="bg-white/35 backdrop-blur-xl rounded-2xl border border-white/60 p-5 shadow-xs hover:shadow-md hover:bg-white/50 transition-all flex flex-col justify-between cursor-pointer select-none group relative active:ring-2 active:ring-emerald-500/40"
+                  title="Click or tap anywhere to add 1 unit"
                 >
                   <div>
                     <div className="flex items-start justify-between">
-                      <div className={`w-9 h-9 rounded-xl border flex items-center justify-center ${item.iconBg}`}>
+                      <div className={`w-10 h-10 rounded-xl border flex items-center justify-center ${item.iconBg} shadow-2xs group-hover:scale-105 transition-transform`}>
                         {item.icon}
                       </div>
-                      <span className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded border ${
+                      <span 
+                        onClick={(e) => e.stopPropagation()}
+                        className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded border ${
                         item.isRecyclable 
                           ? "bg-emerald-50 text-emerald-800 border-emerald-200" 
                           : "bg-red-50 text-red-700 border-red-200"
@@ -456,7 +461,7 @@ export default function DailyTrackerPage() {
                     </div>
 
                     <div className="mt-3">
-                      <h4 className="text-sm font-bold text-foreground leading-snug">
+                      <h4 className="text-sm font-bold text-foreground leading-snug group-hover:text-emerald-950 transition-colors">
                         {item.name}
                       </h4>
                       <div className="flex items-center gap-3 font-mono text-[11px] text-muted-foreground mt-1">
@@ -470,23 +475,34 @@ export default function DailyTrackerPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
-                    <div className="flex items-center gap-2 bg-stone-100/80 border border-border rounded-lg p-1">
+                  <div 
+                    className="mt-4 pt-3 border-t border-border flex items-center justify-between"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-2 bg-stone-100/90 border border-border rounded-xl p-1 shadow-inner">
                       <button
-                        onClick={() => updateCount(item.id, -1)}
-                        className="w-7 h-7 rounded bg-white hover:bg-stone-200 text-stone-700 font-mono font-bold flex items-center justify-center transition shadow-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateCount(item.id, -1);
+                        }}
+                        className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-white hover:bg-stone-200 text-stone-700 font-mono text-base font-bold flex items-center justify-center transition shadow-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                         type="button"
                         disabled={qty === 0}
+                        aria-label={`Decrease count for ${item.name}`}
                       >
                         -
                       </button>
-                      <span className="font-mono text-sm font-bold text-foreground w-5 text-center">
+                      <span className="font-mono text-sm font-bold text-foreground w-6 text-center">
                         {qty}
                       </span>
                       <button
-                        onClick={() => updateCount(item.id, 1)}
-                        className="w-7 h-7 rounded bg-primary hover:bg-black text-white font-mono font-bold flex items-center justify-center transition shadow-xs cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateCount(item.id, 1);
+                        }}
+                        className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-primary hover:bg-black text-white font-mono text-base font-bold flex items-center justify-center transition shadow-xs cursor-pointer active:scale-95"
                         type="button"
+                        aria-label={`Increase count for ${item.name}`}
                       >
                         +
                       </button>

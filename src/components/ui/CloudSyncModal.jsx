@@ -17,6 +17,7 @@ import {
   logOutUser, 
   subscribeToAuth, 
   syncLocalToFirestore,
+  restoreAndMergeFromFirestore,
   requestNotificationPermission
 } from '../../lib/firebase';
 
@@ -46,8 +47,20 @@ export default function CloudSyncModal({ isOpen, onClose }) {
     if (!res.success) {
       setAuthError(res.error || "Google Sign-In failed. Check internet connection.");
     } else {
-      // Auto sync local logs to cloud on successful sign in
-      handleCloudSync(res.user);
+      // 1. Pull & merge from Firestore FIRST to prevent fresh device from overwriting cloud
+      setSyncing(true);
+      const restoreRes = await restoreAndMergeFromFirestore(res.user);
+      setSyncing(false);
+
+      if (restoreRes.success && restoreRes.count > 0) {
+        setSyncStatus({ 
+          type: 'success', 
+          text: `Synchronized ${restoreRes.count} daily logs from Cloud Firestore!` 
+        });
+      } else {
+        // If account is completely new with 0 cloud logs, sync local logs to cloud
+        handleCloudSync(res.user);
+      }
     }
   };
 
@@ -69,6 +82,19 @@ export default function CloudSyncModal({ isOpen, onClose }) {
       setSyncStatus({ type: 'success', text: `Successfully synced ${res.count} daily logs to Cloud Firestore!` });
     } else {
       setSyncStatus({ type: 'error', text: res.message || "Cloud sync failed." });
+    }
+  };
+
+  const handleRestoreCloud = async (activeUser = user) => {
+    if (!activeUser) return;
+    setSyncing(true);
+    setSyncStatus(null);
+    const res = await restoreAndMergeFromFirestore(activeUser);
+    setSyncing(false);
+    if (res.success) {
+      setSyncStatus({ type: 'success', text: `Restored ${res.count} daily logs from Cloud Firestore!` });
+    } else {
+      setSyncStatus({ type: 'error', text: res.message || "Failed to retrieve cloud data." });
     }
   };
 
@@ -271,15 +297,28 @@ export default function CloudSyncModal({ isOpen, onClose }) {
             </span>
             <div className="flex items-center gap-2">
               {user && (
-                <button
-                  onClick={() => handleCloudSync()}
-                  disabled={syncing}
-                  type="button"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-mono text-xs font-bold transition cursor-pointer shadow-sm"
-                >
-                  <RefreshCw size={13} className={syncing ? "animate-spin" : ""} />
-                  <span>{syncing ? "Syncing..." : "Sync to Cloud"}</span>
-                </button>
+                <>
+                  <button
+                    onClick={() => handleRestoreCloud()}
+                    disabled={syncing}
+                    type="button"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 font-mono text-xs font-bold transition cursor-pointer shadow-2xs"
+                    title="Pull latest entries from Cloud Firestore"
+                  >
+                    <Cloud size={13} className={syncing ? "animate-spin text-emerald-600" : "text-emerald-700"} />
+                    <span>Pull Cloud</span>
+                  </button>
+                  <button
+                    onClick={() => handleCloudSync()}
+                    disabled={syncing}
+                    type="button"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-mono text-xs font-bold transition cursor-pointer shadow-sm"
+                    title="Upload local entries to Cloud Firestore"
+                  >
+                    <RefreshCw size={13} className={syncing ? "animate-spin" : ""} />
+                    <span>Sync Cloud</span>
+                  </button>
+                </>
               )}
               <button
                 onClick={onClose}

@@ -67,8 +67,29 @@ export const computeTotalsFromCounts = (counts) => {
   return { totalGrams, totalCostINR, maxDecomposition };
 };
 
+export const getTodayIsoDate = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const getIsoDateFromTimestamp = (timestamp) => {
+  if (!timestamp) return getTodayIsoDate();
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return getTodayIsoDate();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const isSameDay = (d1, d2) => {
   if (!d1 || !d2) return false;
+  if (typeof d1 === 'string' && typeof d2 === 'string' && d1.length === 10 && d2.length === 10 && d1.includes('-') && d2.includes('-')) {
+    if (d1 === d2) return true;
+  }
   const date1 = new Date(d1);
   const date2 = new Date(d2);
   if (isNaN(date1.getTime()) || isNaN(date2.getTime())) return false;
@@ -105,15 +126,72 @@ export const setStoredHistory = (history) => {
   }
 };
 
+export const mergeHistoryEntries = (localList = [], cloudList = []) => {
+  const map = new Map();
+
+  const getEntryKey = (entry) => {
+    if (!entry) return null;
+    if (entry.dateIso) return entry.dateIso;
+    if (entry.timestamp) return getIsoDateFromTimestamp(entry.timestamp);
+    if (entry.date) return entry.date.replace(/[/\\]/g, '-');
+    return null;
+  };
+
+  // Add local entries first
+  (Array.isArray(localList) ? localList : []).forEach((entry) => {
+    const key = getEntryKey(entry);
+    if (key) {
+      map.set(key, { ...entry, dateIso: key });
+    }
+  });
+
+  // Merge cloud entries
+  (Array.isArray(cloudList) ? cloudList : []).forEach((cloudEntry) => {
+    const key = getEntryKey(cloudEntry);
+    if (!key) return;
+
+    if (!map.has(key)) {
+      map.set(key, { ...cloudEntry, dateIso: key });
+    } else {
+      const existing = map.get(key);
+      const cloudGrams = Number(cloudEntry.totalGrams) || 0;
+      const localGrams = Number(existing.totalGrams) || 0;
+      
+      const cloudTime = cloudEntry.syncedAt?.seconds ? cloudEntry.syncedAt.seconds * 1000 : new Date(cloudEntry.timestamp || 0).getTime();
+      const localTime = new Date(existing.timestamp || 0).getTime();
+
+      if (cloudGrams >= localGrams || cloudTime > localTime) {
+        map.set(key, {
+          ...existing,
+          ...cloudEntry,
+          dateIso: key,
+          counts: { ...(existing.counts || {}), ...(cloudEntry.counts || {}) }
+        });
+      }
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) => {
+    const timeA = new Date(a.timestamp || a.dateIso || 0).getTime();
+    const timeB = new Date(b.timestamp || b.dateIso || 0).getTime();
+    return timeA - timeB;
+  });
+};
+
 export const getTodayHistoryEntry = () => {
   const history = getStoredHistory();
   if (!Array.isArray(history) || history.length === 0) return null;
   const today = new Date();
   const todayStr = today.toLocaleDateString();
+  const todayIso = getTodayIsoDate();
   for (let i = history.length - 1; i >= 0; i--) {
     const entry = history[i];
     const entryDate = entry?.timestamp ? new Date(entry.timestamp) : null;
-    if ((entryDate && isSameDay(entryDate, today)) || entry?.date === todayStr) {
+    if (
+      entry?.dateIso === todayIso ||
+      (entryDate && isSameDay(entryDate, today)) || 
+      entry?.date === todayStr
+    ) {
       return entry;
     }
   }
@@ -144,13 +222,18 @@ export const syncTodayHistoryWithCounts = (rawCounts) => {
   const history = getStoredHistory();
   const today = new Date();
   const todayStr = today.toLocaleDateString();
+  const todayIso = getTodayIsoDate();
   const nowIso = today.toISOString();
 
   let targetIdx = -1;
   for (let i = history.length - 1; i >= 0; i--) {
     const entry = history[i];
     const entryDate = entry?.timestamp ? new Date(entry.timestamp) : null;
-    if ((entryDate && isSameDay(entryDate, today)) || entry?.date === todayStr) {
+    if (
+      entry?.dateIso === todayIso ||
+      (entryDate && isSameDay(entryDate, today)) || 
+      entry?.date === todayStr
+    ) {
       targetIdx = i;
       break;
     }
@@ -172,6 +255,7 @@ export const syncTodayHistoryWithCounts = (rawCounts) => {
   const updatedEntry = {
     timestamp: targetIdx !== -1 && history[targetIdx]?.timestamp ? history[targetIdx].timestamp : nowIso,
     date: targetIdx !== -1 && history[targetIdx]?.date ? history[targetIdx].date : todayStr,
+    dateIso: targetIdx !== -1 && history[targetIdx]?.dateIso ? history[targetIdx].dateIso : todayIso,
     counts,
     totalGrams,
     totalCostINR,

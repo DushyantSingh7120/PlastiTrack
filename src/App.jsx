@@ -11,17 +11,40 @@ import SundayReviewPage from './features/sunday-review/SundayReviewPage';
 import AlternativesPage from './features/alternatives/AlternativesPage';
 import LandingPage from './features/landing/LandingPage';
 import ResearchDocumentationPage from './features/docs/ResearchDocumentationPage';
-import { auth, debouncedSyncLocalToFirestore } from './lib/firebase';
+import { 
+  auth, 
+  debouncedSyncLocalToFirestore, 
+  subscribeToAuth, 
+  restoreAndMergeFromFirestore, 
+  subscribeToCloudLogs 
+} from './lib/firebase';
 
 function App() {
   React.useEffect(() => {
+    let cloudUnsub = () => {};
+
+    // 1. Listen for auth changes: when logged in, restore cloud data and listen to live updates
+    const authUnsub = subscribeToAuth((user) => {
+      cloudUnsub();
+      if (user) {
+        restoreAndMergeFromFirestore(user);
+        cloudUnsub = subscribeToCloudLogs(user);
+      }
+    });
+
+    // 2. Debounced auto-upload when local data changes
     const handleDataUpdate = () => {
       if (auth?.currentUser) {
         debouncedSyncLocalToFirestore(auth.currentUser);
       }
     };
     window.addEventListener('plastitrack-data-updated', handleDataUpdate);
-    return () => window.removeEventListener('plastitrack-data-updated', handleDataUpdate);
+
+    return () => {
+      authUnsub();
+      cloudUnsub();
+      window.removeEventListener('plastitrack-data-updated', handleDataUpdate);
+    };
   }, []);
   return (
     <ErrorBoundary>

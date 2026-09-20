@@ -10,11 +10,25 @@ import {
   getFirestore, 
   doc, 
   setDoc, 
+  getDoc,
+  getDocs,
+  collection,
+  onSnapshot,
   serverTimestamp 
 } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-import { getStoredHistory, getStoredInstitution, getStoredTargetGrams } from "./storage";
+import { 
+  getStoredHistory, 
+  setStoredHistory,
+  getStoredInstitution, 
+  setStoredInstitution,
+  getStoredTargetGrams,
+  setStoredTargetGrams,
+  mergeHistoryEntries,
+  getIsoDateFromTimestamp,
+  dispatchDataUpdate
+} from "./storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -148,6 +162,115 @@ export function subscribeToAuth(callback) {
 }
 
 /**
+ * Restore and merge Cloud Firestore data with local storage
+ * Called immediately upon login and on initial auth state resolution
+ */
+export async function restoreAndMergeFromFirestore(user) {
+  if (!user || !user.uid) return { success: false, message: "No authenticated user" };
+  if (!db) return { success: false, message: "Cloud Firestore is not initialized." };
+
+  try {
+    // 1. Fetch user profile document
+    const userRef = doc(db, "users", user.uid);
+    const userSnap = await getDoc(userRef);
+
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      if (data.dailyTargetGrams && Number(data.dailyTargetGrams) > 0) {
+        setStoredTargetGrams(Number(data.dailyTargetGrams));
+      }
+      if (data.institution && typeof data.institution === 'string') {
+        setStoredInstitution(data.institution);
+      }
+    }
+
+    // 2. Fetch dailyLogs subcollection
+    const logsCol = collection(db, "users", user.uid, "dailyLogs");
+    const logsSnap = await getDocs(logsCol);
+    const cloudEntries = [];
+
+    logsSnap.forEach((docSnap) => {
+      const log = docSnap.data();
+      if (log) {
+        const id = docSnap.id;
+        const entryIso = log.dateIso || (id.length === 10 && id.includes('-') ? id : null);
+        cloudEntries.push({
+          ...log,
+          dateIso: entryIso || getIsoDateFromTimestamp(log.timestamp || log.date)
+        });
+      }
+    });
+
+    const localHistory = getStoredHistory();
+    const mergedHistory = mergeHistoryEntries(localHistory, cloudEntries);
+    setStoredHistory(mergedHistory);
+
+    // If local had entries that cloud did not have, upload the merged set so cloud is up to date
+    if (mergedHistory.length > cloudEntries.length) {
+      debouncedSyncLocalToFirestore(user);
+    }
+
+    dispatchDataUpdate();
+    return { success: true, count: mergedHistory.length };
+  } catch (error) {
+    console.error("[Firebase] Error restoring data from Firestore:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Real-time listener for multi-device sync
+ * Whenever any device modifies dailyLogs in Firestore, updates local storage automatically
+ */
+export function subscribeToCloudLogs(user, onUpdate) {
+  if (!user || !user.uid || !db) {
+    return () => {};
+  }
+
+  try {
+    const logsCol = collection(db, "users", user.uid, "dailyLogs");
+    const unsubscribe = onSnapshot(logsCol, (snapshot) => {
+      if (snapshot.metadata.hasPendingWrites) {
+        return;
+      }
+
+      const cloudEntries = [];
+      snapshot.forEach((docSnap) => {
+        const log = docSnap.data();
+        if (log) {
+          const id = docSnap.id;
+          const entryIso = log.dateIso || (id.length === 10 && id.includes('-') ? id : null);
+          cloudEntries.push({
+            ...log,
+            dateIso: entryIso || getIsoDateFromTimestamp(log.timestamp || log.date)
+          });
+        }
+      });
+
+      if (cloudEntries.length > 0) {
+        const localHistory = getStoredHistory();
+        const mergedHistory = mergeHistoryEntries(localHistory, cloudEntries);
+        
+        if (JSON.stringify(localHistory) !== JSON.stringify(mergedHistory)) {
+          setStoredHistory(mergedHistory);
+          dispatchDataUpdate();
+          if (typeof onUpdate === 'function') {
+            onUpdate(mergedHistory);
+          }
+        }
+      }
+    }, (err) => {
+      console.warn("[Firebase] Real-time cloud logs listener error:", err);
+    });
+
+    return unsubscribe;
+  } catch (err) {
+    console.warn("[Firebase] Failed to attach cloud listener:", err);
+    return () => {};
+  }
+}
+
+/**
  * Sync local history and counts to Cloud Firestore
  */
 export async function syncLocalToFirestore(user) {
@@ -159,26 +282,40 @@ export async function syncLocalToFirestore(user) {
     const institution = getStoredInstitution();
     const targetGrams = getStoredTargetGrams();
 
-    // 1. Update user profile document
+    // 1. Update user profile document safely
     const userRef = doc(db, "users", user.uid);
+    let totalToSave = history.length;
+    
+    // Guard against blank overwrite: if local has 0, check if cloud has existing logs
+    if (totalToSave === 0) {
+      try {
+        const existingSnap = await getDoc(userRef);
+        if (existingSnap.exists() && existingSnap.data()?.totalEntries > 0) {
+          totalToSave = existingSnap.data().totalEntries;
+        }
+      } catch {
+        // ignore fallback check
+      }
+    }
+
     await setDoc(userRef, {
       displayName: user.displayName,
       email: user.email,
       institution,
       dailyTargetGrams: targetGrams,
-      totalEntries: history.length,
+      totalEntries: totalToSave,
       lastSyncedAt: serverTimestamp()
     }, { merge: true });
 
-    // 2. Upload historical daily log documents
+    // 2. Upload historical daily log documents using standardized ISO dates
     for (const entry of history) {
-      if (!entry.date) continue;
-      // Sanitize date for document ID (e.g., "2026-09-07" or replace slashes)
-      const docId = entry.date.replace(/[/\\]/g, "-");
+      const docId = entry.dateIso || getIsoDateFromTimestamp(entry.timestamp || entry.date);
+      if (!docId) continue;
       const logRef = doc(db, "users", user.uid, "dailyLogs", docId);
       await setDoc(logRef, {
         timestamp: entry.timestamp || new Date().toISOString(),
         date: entry.date,
+        dateIso: docId,
         totalGrams: Number(entry.totalGrams) || 0,
         totalCostINR: Number(entry.totalCostINR) || 0,
         counts: entry.counts || {},
