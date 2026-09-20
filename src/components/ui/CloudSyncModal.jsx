@@ -81,7 +81,7 @@ export default function CloudSyncModal({ isOpen, onClose }) {
     if (res.success) {
       setSyncStatus({ type: 'success', text: `Successfully synced ${res.count} daily logs to Cloud Firestore!` });
     } else {
-      setSyncStatus({ type: 'error', text: res.message || "Cloud sync failed." });
+      setSyncStatus({ type: 'error', text: res.message || res.error || "Cloud sync failed." });
     }
   };
 
@@ -94,7 +94,7 @@ export default function CloudSyncModal({ isOpen, onClose }) {
     if (res.success) {
       setSyncStatus({ type: 'success', text: `Restored ${res.count} daily logs from Cloud Firestore!` });
     } else {
-      setSyncStatus({ type: 'error', text: res.message || "Failed to retrieve cloud data." });
+      setSyncStatus({ type: 'error', text: res.message || res.error || "Failed to retrieve cloud data." });
     }
   };
 

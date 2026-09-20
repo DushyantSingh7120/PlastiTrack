@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. User Profiles & Daily Logs
+    // A user can ONLY read and write their OWN folder
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      match /dailyLogs/{logId} {
+        // Read: user can read and list their own daily logs
+        allow read: if request.auth != null && request.auth.uid == userId;
+        
+        // Create & Update: user can write with valid non-negative numbers
+        allow create, update: if request.auth != null && request.auth.uid == userId
+          && request.resource.data.totalGrams >= 0
+          && request.resource.data.totalCostINR >= 0;
+          
+        // Delete: user can remove their own logs
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // 2. Global Public Research Facts & Static Catalogs
+    // Anyone (even guests) can read, but NO client can edit or delete them
+    match /public_research/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // 3. Default Deny: Lock down everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
