@@ -21,8 +21,15 @@ import {
   syncTodayHistoryWithCounts, 
   getStoredHistory,
   removeHistoryEntryByIndex,
-  dispatchDataUpdate 
+  dispatchDataUpdate,
+  getTodayIsoDate,
+  getIsoDateFromTimestamp
 } from '../../lib/storage';
+import { 
+  auth, 
+  deleteHistoryEntryFromFirestore, 
+  syncLocalToFirestore 
+} from '../../lib/firebase';
 
 export const TRACKER_PRESETS = [
   {
@@ -230,25 +237,40 @@ export default function DailyTrackerPage() {
     };
   }, []);
 
-  const handleDeleteEntry = (index) => {
+  const handleDeleteEntry = async (index) => {
+    const entryToDelete = history[index];
+    const dateIso = entryToDelete?.dateIso || getIsoDateFromTimestamp(entryToDelete?.timestamp || entryToDelete?.date);
     removeHistoryEntryByIndex(index);
     const updatedHistory = getStoredHistory();
     setHistory(updatedHistory);
     const zeroed = {};
     TRACKER_PRESETS.forEach((item) => (zeroed[item.id] = 0));
     setCounts(zeroed);
+    setTrackerCounts(zeroed);
     showNotice('Entry removed and counters zeroed.');
+
+    if (auth?.currentUser) {
+      if (dateIso) {
+        await deleteHistoryEntryFromFirestore(auth.currentUser, dateIso);
+      }
+      await syncLocalToFirestore(auth.currentUser);
+    }
   };
 
-  const handleClearAllLogs = () => {
+  const handleClearAllLogs = async () => {
     localStorage.removeItem('plastitrack_history');
     localStorage.removeItem('plastitrack_tracker_counts');
     setHistory([]);
     const zeroed = {};
     TRACKER_PRESETS.forEach((item) => (zeroed[item.id] = 0));
     setCounts(zeroed);
+    setTrackerCounts(zeroed);
     dispatchDataUpdate();
     showNotice('All logged data cleared successfully.');
+
+    if (auth?.currentUser) {
+      await syncLocalToFirestore(auth.currentUser);
+    }
   };
 
   const handleLoadEntryIntoTracker = (entry) => {
@@ -274,7 +296,7 @@ export default function DailyTrackerPage() {
     });
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     const zeroed = {};
     TRACKER_PRESETS.forEach((item) => (zeroed[item.id] = 0));
     setCounts(zeroed);
@@ -282,6 +304,12 @@ export default function DailyTrackerPage() {
     syncTodayHistoryWithCounts(zeroed);
     dispatchDataUpdate();
     showNotice("Counters reset and today's log cleared.");
+
+    if (auth?.currentUser) {
+      const todayIso = getTodayIsoDate();
+      await deleteHistoryEntryFromFirestore(auth.currentUser, todayIso);
+      await syncLocalToFirestore(auth.currentUser);
+    }
   };
 
   const { totalGrams, totalCostINR, maxDecomposition, polymerTotals, recyclableGrams } = useMemo(() => {
@@ -329,7 +357,7 @@ export default function DailyTrackerPage() {
     };
   }, [counts]);
 
-  const handleLog = () => {
+  const handleLog = async () => {
     setTrackerCounts(counts);
     syncTodayHistoryWithCounts(counts);
     dispatchDataUpdate();
@@ -337,6 +365,10 @@ export default function DailyTrackerPage() {
       ? `✓ Saved today's log: ${totalGrams}g (₹${totalCostINR})!`
       : 'Counters saved at zero.'
     );
+
+    if (auth?.currentUser) {
+      await syncLocalToFirestore(auth.currentUser);
+    }
   };
 
   const showNotice = (msg) => {

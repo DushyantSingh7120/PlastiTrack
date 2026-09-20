@@ -12,6 +12,7 @@ import {
   setDoc, 
   getDoc,
   getDocs,
+  deleteDoc,
   collection,
   onSnapshot,
   serverTimestamp 
@@ -25,6 +26,8 @@ import {
   setStoredInstitution,
   getStoredTargetGrams,
   setStoredTargetGrams,
+  setTrackerCounts,
+  getTodayIsoDate,
   mergeHistoryEntries,
   getIsoDateFromTimestamp,
   dispatchDataUpdate
@@ -162,10 +165,23 @@ export function subscribeToAuth(callback) {
 }
 
 /**
- * Restore and merge Cloud Firestore data with local storage
- * Called immediately upon login and on initial auth state resolution
+ * Delete a specific daily log from Cloud Firestore
  */
-export async function restoreAndMergeFromFirestore(user) {
+export async function deleteHistoryEntryFromFirestore(user, dateIso) {
+  if (!user || !user.uid || !db || !dateIso) return;
+  try {
+    const logRef = doc(db, "users", user.uid, "dailyLogs", dateIso);
+    await deleteDoc(logRef);
+  } catch (err) {
+    console.error("[Firebase] Error deleting log from Firestore:", err);
+  }
+}
+
+/**
+ * Restore and merge Cloud Firestore data with local storage
+ * Supports options.overwriteLocal when pulling directly from cloud
+ */
+export async function restoreAndMergeFromFirestore(user, options = {}) {
   if (!user || !user.uid) return { success: false, message: "No authenticated user" };
   if (!db) return { success: false, message: "Cloud Firestore is not initialized." };
 
@@ -201,17 +217,38 @@ export async function restoreAndMergeFromFirestore(user) {
       }
     });
 
-    const localHistory = getStoredHistory();
-    const mergedHistory = mergeHistoryEntries(localHistory, cloudEntries);
-    setStoredHistory(mergedHistory);
+    const sortedCloud = cloudEntries.sort((a, b) => {
+      const timeA = new Date(a.timestamp || a.dateIso || 0).getTime();
+      const timeB = new Date(b.timestamp || b.dateIso || 0).getTime();
+      return timeA - timeB;
+    });
 
-    // If local had entries that cloud did not have, upload the merged set so cloud is up to date
-    if (mergedHistory.length > cloudEntries.length) {
+    let finalHistory;
+    if (options.overwriteLocal) {
+      finalHistory = sortedCloud;
+    } else {
+      const localHistory = getStoredHistory();
+      finalHistory = mergeHistoryEntries(localHistory, sortedCloud);
+    }
+
+    setStoredHistory(finalHistory);
+
+    // Synchronize today's tracker counts
+    const todayIso = getTodayIsoDate();
+    const todayEntry = finalHistory.find(e => e.dateIso === todayIso);
+    if (todayEntry && todayEntry.counts && Object.keys(todayEntry.counts).length > 0) {
+      setTrackerCounts(todayEntry.counts);
+    } else {
+      setTrackerCounts({});
+    }
+
+    // If local had entries that cloud did not have, upload them
+    if (!options.overwriteLocal && finalHistory.length > cloudEntries.length) {
       debouncedSyncLocalToFirestore(user);
     }
 
     dispatchDataUpdate();
-    return { success: true, count: mergedHistory.length };
+    return { success: true, count: finalHistory.length };
   } catch (error) {
     console.error("[Firebase] Error restoring data from Firestore:", error);
     return { success: false, error: error.message };
@@ -220,7 +257,7 @@ export async function restoreAndMergeFromFirestore(user) {
 
 /**
  * Real-time listener for multi-device sync
- * Whenever any device modifies dailyLogs in Firestore, updates local storage automatically
+ * Whenever any device modifies dailyLogs in Firestore, updates local storage and tracker counts
  */
 export function subscribeToCloudLogs(user, onUpdate) {
   if (!user || !user.uid || !db) {
@@ -247,17 +284,26 @@ export function subscribeToCloudLogs(user, onUpdate) {
         }
       });
 
-      if (cloudEntries.length > 0) {
-        const localHistory = getStoredHistory();
-        const mergedHistory = mergeHistoryEntries(localHistory, cloudEntries);
-        
-        if (JSON.stringify(localHistory) !== JSON.stringify(mergedHistory)) {
-          setStoredHistory(mergedHistory);
-          dispatchDataUpdate();
-          if (typeof onUpdate === 'function') {
-            onUpdate(mergedHistory);
-          }
-        }
+      const sortedCloud = cloudEntries.sort((a, b) => {
+        const timeA = new Date(a.timestamp || a.dateIso || 0).getTime();
+        const timeB = new Date(b.timestamp || b.dateIso || 0).getTime();
+        return timeA - timeB;
+      });
+
+      setStoredHistory(sortedCloud);
+
+      // Synchronize today's tracker counts
+      const todayIso = getTodayIsoDate();
+      const todayEntry = sortedCloud.find(e => e.dateIso === todayIso);
+      if (todayEntry && todayEntry.counts && Object.keys(todayEntry.counts).length > 0) {
+        setTrackerCounts(todayEntry.counts);
+      } else {
+        setTrackerCounts({});
+      }
+
+      dispatchDataUpdate();
+      if (typeof onUpdate === 'function') {
+        onUpdate(sortedCloud);
       }
     }, (err) => {
       console.warn("[Firebase] Real-time cloud logs listener error:", err);
@@ -272,6 +318,7 @@ export function subscribeToCloudLogs(user, onUpdate) {
 
 /**
  * Sync local history and counts to Cloud Firestore
+ * Handles both additions, updates, and DELETIONS
  */
 export async function syncLocalToFirestore(user) {
   if (!user || !user.uid) return { success: false, message: "No authenticated user" };
@@ -282,32 +329,35 @@ export async function syncLocalToFirestore(user) {
     const institution = getStoredInstitution();
     const targetGrams = getStoredTargetGrams();
 
-    // 1. Update user profile document safely
+    // 1. Update user profile document
     const userRef = doc(db, "users", user.uid);
-    let totalToSave = history.length;
-    
-    // Guard against blank overwrite: if local has 0, check if cloud has existing logs
-    if (totalToSave === 0) {
-      try {
-        const existingSnap = await getDoc(userRef);
-        if (existingSnap.exists() && existingSnap.data()?.totalEntries > 0) {
-          totalToSave = existingSnap.data().totalEntries;
-        }
-      } catch {
-        // ignore fallback check
-      }
-    }
-
     await setDoc(userRef, {
       displayName: user.displayName,
       email: user.email,
       institution,
       dailyTargetGrams: targetGrams,
-      totalEntries: totalToSave,
+      totalEntries: history.length,
       lastSyncedAt: serverTimestamp()
     }, { merge: true });
 
-    // 2. Upload historical daily log documents using standardized ISO dates
+    // 2. Fetch existing cloud documents to delete orphaned / cleared entries
+    const logsCol = collection(db, "users", user.uid, "dailyLogs");
+    const cloudSnap = await getDocs(logsCol);
+    
+    const validDocIds = new Set();
+    for (const entry of history) {
+      const docId = entry.dateIso || getIsoDateFromTimestamp(entry.timestamp || entry.date);
+      if (docId) validDocIds.add(docId);
+    }
+
+    // A. Delete any cloud document that was deleted locally
+    for (const docSnap of cloudSnap.docs) {
+      if (!validDocIds.has(docSnap.id)) {
+        await deleteDoc(docSnap.ref);
+      }
+    }
+
+    // B. Upload current active historical daily log documents using standardized ISO dates
     for (const entry of history) {
       const docId = entry.dateIso || getIsoDateFromTimestamp(entry.timestamp || entry.date);
       if (!docId) continue;
@@ -347,7 +397,7 @@ export function debouncedSyncLocalToFirestore(user) {
     console.log("[Firebase] Auto-syncing debounced logs to cloud...");
     await syncLocalToFirestore(user);
     syncTimeout = null;
-  }, 3000);
+  }, 1200);
 }
 
 export default app;

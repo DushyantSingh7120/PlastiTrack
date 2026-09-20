@@ -20,6 +20,7 @@ import {
   restoreAndMergeFromFirestore,
   requestNotificationPermission
 } from '../../lib/firebase';
+import { getStoredHistory } from '../../lib/storage';
 
 export default function CloudSyncModal({ isOpen, onClose }) {
   const [user, setUser] = useState(null);
@@ -47,9 +48,9 @@ export default function CloudSyncModal({ isOpen, onClose }) {
     if (!res.success) {
       setAuthError(res.error || "Google Sign-In failed. Check internet connection.");
     } else {
-      // 1. Pull & merge from Firestore FIRST to prevent fresh device from overwriting cloud
+      // 1. Pull from Firestore first with cloud as source of truth
       setSyncing(true);
-      const restoreRes = await restoreAndMergeFromFirestore(res.user);
+      const restoreRes = await restoreAndMergeFromFirestore(res.user, { overwriteLocal: true });
       setSyncing(false);
 
       if (restoreRes.success && restoreRes.count > 0) {
@@ -58,8 +59,16 @@ export default function CloudSyncModal({ isOpen, onClose }) {
           text: `Synchronized ${restoreRes.count} daily logs from Cloud Firestore!` 
         });
       } else {
-        // If account is completely new with 0 cloud logs, sync local logs to cloud
-        handleCloudSync(res.user);
+        // If cloud had 0 logs, check if user has local logs created in guest mode to sync
+        const localLogs = getStoredHistory();
+        if (localLogs.length > 0) {
+          handleCloudSync(res.user);
+        } else {
+          setSyncStatus({ 
+            type: 'success', 
+            text: 'Signed in successfully! Cloud storage active.' 
+          });
+        }
       }
     }
   };
@@ -89,10 +98,20 @@ export default function CloudSyncModal({ isOpen, onClose }) {
     if (!activeUser) return;
     setSyncing(true);
     setSyncStatus(null);
-    const res = await restoreAndMergeFromFirestore(activeUser);
+    const res = await restoreAndMergeFromFirestore(activeUser, { overwriteLocal: true });
     setSyncing(false);
     if (res.success) {
-      setSyncStatus({ type: 'success', text: `Restored ${res.count} daily logs from Cloud Firestore!` });
+      if (res.count === 0) {
+        setSyncStatus({ 
+          type: 'success', 
+          text: 'Cloud is empty (0 logs). Local counters and logs reset to zero.' 
+        });
+      } else {
+        setSyncStatus({ 
+          type: 'success', 
+          text: `Restored ${res.count} daily logs from Cloud Firestore!` 
+        });
+      }
     } else {
       setSyncStatus({ type: 'error', text: res.message || res.error || "Failed to retrieve cloud data." });
     }

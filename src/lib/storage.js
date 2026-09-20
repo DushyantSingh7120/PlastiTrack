@@ -324,29 +324,17 @@ export const setStoredInstitution = (name) => {
 export const getTrackerCounts = () => {
   try {
     const raw = localStorage.getItem(TRACKER_COUNTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (parsed && Object.keys(parsed).length > 0) {
-      const normalized = normalizeCounts(parsed);
-      const hasPositive = Object.values(normalized).some((v) => v > 0);
-      if (hasPositive) return normalized;
+    if (raw !== null) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return normalizeCounts(parsed);
+      }
     }
 
-    // Fallback: If tracker counts in localStorage are empty/zero, read today's history entry or latest entry
-    const sourceEntry = getTodayHistoryEntry() || getLatestHistoryEntry();
-    if (sourceEntry) {
-      let countsToUse = sourceEntry.counts ? normalizeCounts(sourceEntry.counts) : {};
-
-      // Fallback heuristics if counts object was missing or empty
-      if (Object.keys(countsToUse).length === 0) {
-        const g = Number(sourceEntry.totalGrams) || 0;
-        if (g === 12) countsToUse = { pet_bottle_500: 1 };
-        else if (g === 24) countsToUse = { pet_bottle_1000: 1 };
-        else if (g === 8) countsToUse = { chai_cup: 1 };
-        else if (g === 6 || g === 5) countsToUse = { ldpe_bag: 1 };
-        else if (g === 20 || g === 24) countsToUse = { takeout_box: 1 };
-        else if (g > 0) countsToUse = { pet_bottle_500: Math.max(1, Math.round(g / 12)) };
-      }
-
+    // Fallback only if tracker counts key was never created in localStorage
+    const todayEntry = getTodayHistoryEntry();
+    if (todayEntry && todayEntry.counts) {
+      const countsToUse = normalizeCounts(todayEntry.counts);
       const hasPositive = Object.values(countsToUse).some((v) => v > 0);
       if (hasPositive) {
         localStorage.setItem(TRACKER_COUNTS_KEY, JSON.stringify(countsToUse));
@@ -354,7 +342,7 @@ export const getTrackerCounts = () => {
       }
     }
 
-    return parsed ? normalizeCounts(parsed) : {};
+    return {};
   } catch {
     return {};
   }

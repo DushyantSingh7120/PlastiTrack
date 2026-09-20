@@ -27,7 +27,7 @@ function App() {
     const authUnsub = subscribeToAuth((user) => {
       cloudUnsub();
       if (user) {
-        restoreAndMergeFromFirestore(user);
+        restoreAndMergeFromFirestore(user, { overwriteLocal: true });
         cloudUnsub = subscribeToCloudLogs(user);
       }
     });

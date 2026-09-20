@@ -9,6 +9,7 @@ import {
   clearAllStoredData, 
   getFullBackupData 
 } from '../../lib/storage';
+import { auth, syncLocalToFirestore } from '../../lib/firebase';
 
 export default function SettingsModal({ isOpen, onClose, onOpenLegal }) {
   if (!isOpen) return null;
@@ -42,10 +43,13 @@ function SettingsModalDialog({ onClose, onOpenLegal }) {
     URL.revokeObjectURL(url);
   };
 
-  const handleClearData = () => {
+  const handleClearData = async () => {
     clearAllStoredData();
     setResetConfirm(false);
     onClose();
+    if (auth?.currentUser) {
+      await syncLocalToFirestore(auth.currentUser);
+    }
   };
 
   return (
