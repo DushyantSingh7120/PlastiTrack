@@ -16,13 +16,8 @@ import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 import { getStoredHistory, getStoredInstitution, getStoredTargetGrams } from "./storage";
 
-// Safe runtime fallback for project credentials (prevents blank screen crashes if hosting environment variables are missing)
-const DEFAULT_API_KEY = typeof atob !== 'undefined' 
-  ? atob("QUl6YVN5Q1NBUXVJOHFzZVh1MmpzX1VpZ2NOWHFzcFUwQW9fNGlV") 
-  : "AIzaSyCSAQuI8qseXu2js_UigcNXqspU0Ao_4iU";
-
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || DEFAULT_API_KEY,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "plastitrack-e231a.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "plastitrack-e231a",
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "plastitrack-e231a.firebasestorage.app",
@@ -119,6 +114,9 @@ export async function signInWithGoogle() {
       friendlyMessage = "Sign-in popup was closed before completing.";
     } else if (error.code === 'auth/popup-blocked') {
       friendlyMessage = "Sign-in popup was blocked by the browser. Please allow popups for this site.";
+    } else if (error.code === 'auth/api-key-not-valid' || (error.message && error.message.includes('api-key-not-valid'))) {
+      const currentHost = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
+      friendlyMessage = `API Key domain restriction: Google Cloud is blocking requests from '${currentHost}'. To fix, add '${currentHost}/*' to allowed HTTP referrers in Google Cloud Console > APIs & Services > Credentials (or test on your deployed Vercel/Firebase URL).`;
     }
     return { success: false, error: friendlyMessage, code: error.code };
   }
