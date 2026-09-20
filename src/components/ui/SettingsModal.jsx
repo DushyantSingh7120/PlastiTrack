@@ -9,7 +9,7 @@ import {
   clearAllStoredData, 
   getFullBackupData 
 } from '../../lib/storage';
-import { auth, syncLocalToFirestore } from '../../lib/firebase';
+import { auth, syncLocalToFirestore, saveLiveDraftCounts } from '../../lib/firebase';
 
 export default function SettingsModal({ isOpen, onClose, onOpenLegal }) {
   if (!isOpen) return null;
@@ -22,10 +22,13 @@ function SettingsModalDialog({ onClose, onOpenLegal }) {
   const [resetConfirm, setResetConfirm] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setStoredTargetGrams(targetGrams);
     setStoredInstitution(institution);
     setSavedSuccess(true);
+    if (auth?.currentUser) {
+      await syncLocalToFirestore(auth.currentUser);
+    }
     setTimeout(() => {
       setSavedSuccess(false);
       onClose();
@@ -48,6 +51,7 @@ function SettingsModalDialog({ onClose, onOpenLegal }) {
     setResetConfirm(false);
     onClose();
     if (auth?.currentUser) {
+      await saveLiveDraftCounts(auth.currentUser, {}, { immediate: true });
       await syncLocalToFirestore(auth.currentUser);
     }
   };

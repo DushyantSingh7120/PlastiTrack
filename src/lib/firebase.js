@@ -17,7 +17,7 @@ import {
   onSnapshot,
   serverTimestamp 
 } from "firebase/firestore";
-import { getMessaging, getToken, onMessage } from "firebase/messaging";
+import { getMessaging, getToken } from "firebase/messaging";
 
 import { 
   getStoredHistory, 
@@ -435,8 +435,8 @@ export function subscribeToCloudLogs(user, onUpdate) {
     console.warn(`[Firebase] Real-time listener warning in ${context}:`, err?.code || err?.message || err);
     if (!active) return;
 
-    try { unsubUser(); } catch (_) {}
-    try { unsubLogs(); } catch (_) {}
+    try { unsubUser(); } catch {}
+    try { unsubLogs(); } catch {}
 
     // Refresh auth token if session expired during background/sleep
     if (auth?.currentUser && (err?.code === 'permission-denied' || err?.code === 'unavailable')) {
@@ -459,8 +459,8 @@ export function subscribeToCloudLogs(user, onUpdate) {
   return () => {
     active = false;
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    try { unsubUser(); } catch (_) {}
-    try { unsubLogs(); } catch (_) {}
+    try { unsubUser(); } catch {}
+    try { unsubLogs(); } catch {}
   };
 }
 

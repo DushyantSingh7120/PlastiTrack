@@ -611,7 +611,7 @@ export default function DailyTrackerPage() {
                 {history.map((entry, idx) => {
                   const d = entry?.timestamp ? new Date(entry.timestamp) : null;
                   const dateFormatted = d && !isNaN(d.getTime()) ? d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : (entry.date || 'Saved Log');
-                  const entryItems = entry.counts ? Object.entries(entry.counts).filter(([_, q]) => q > 0) : [];
+                  const entryItems = entry.counts ? Object.entries(entry.counts).filter(([, q]) => q > 0) : [];
 
                   return (
                     <div 
